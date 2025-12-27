@@ -1,0 +1,122 @@
+
+################################################################################
+# FB 改为离线加载（load_fb_*），TM 仍联网抓取
+################################################################################
+
+install.packages("devtools")
+install.packages("dplyr")
+install.packages("chromote")
+devtools::install_github("JaseZiv/worldfootballRdata")
+devtools::install_github("JaseZiv/worldfootballR")
+
+library(devtools)
+library(dplyr)
+library(chromote)
+library(worldfootballR)
+library(worldfootballRdata)
+
+# 固定输出目录
+output_dir <- "/Users/songyang/Downloads/data/"
+if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+cat("✅ 文件将保存到：", output_dir, "\n")
+
+################################################################################
+# 加载五大联赛球队层级统计
+big5_standard <- load_fb_big5_advanced_season_stats(
+  season_end_year = c(2019:2024),
+  stat_type = "standard",
+  team_or_player = "team"
+)
+
+# 英超筛选 + 字段重命名
+pl_standard <- big5_standard %>%
+  filter(Comp == "Premier League" & Team_or_Opponent == "team") %>%
+  select(-Comp, -Num_Players, -Team_or_Opponent, -Url) %>%
+  rename("Year" = "Season_End_Year",
+         "G_plus_A" = "G+A",
+         "npxG_plus_xAG_Expected" = "npxG+xAG_Expected",
+         "Gls_Per_90" = "Gls_Per",
+         "Ast_Per_90" = "Ast_Per",
+         "G_plus_A_Per_90" = "G+A_Per",
+         "G_minus_PK_Per_90" = "G_minus_PK_Per",
+         "G_plus_A_minus_PK_Per_90" = "G+A_minus_PK_Per",
+         "xG_Per_90" = "xG_Per",
+         "xAG_Per_90" = "xAG_Per",
+         "xG_plus_xAG_Per_90" = "xG+xAG_Per",
+         "npxG_Per_90" = "npxG_Per",
+         "npxG_plus_xAG_Per_90" = "npxG+xAG_Per")
+
+write.csv(pl_standard, file.path(output_dir, "teams_preprocessed.csv"), row.names = FALSE)
+
+################################################################################
+# 用离线 load_fb_big5_advanced_season_stats() 代替 fb_league_stats()
+# 加载英超球员层级统计数据（近五年）
+load_players <- function(year) {
+  df <- load_fb_big5_advanced_season_stats(
+    season_end_year = year,
+    stat_type = "standard",
+    team_or_player = "player"
+  )
+  df %>%
+    filter(Comp == "Premier League") %>%
+    select(-Comp, -Squad, -Url) %>%
+    rename(player_name = Player) %>%
+    mutate(Year = year)
+}
+
+standard_2020 <- load_players(2020)
+standard_2021 <- load_players(2021)
+standard_2022 <- load_players(2022)
+standard_2023 <- load_players(2023)
+standard_2024 <- load_players(2024)
+
+################################################################################
+# Transfermarkt 在线市值数据（保留）
+values_2020 <- tm_player_market_values("England", 2020) %>% select(player_name, market_value_euro = player_market_value_euro)
+values_2021 <- tm_player_market_values("England", 2021) %>% select(player_name, market_value_euro = player_market_value_euro)
+values_2022 <- tm_player_market_values("England", 2022) %>% select(player_name, market_value_euro = player_market_value_euro)
+values_2023 <- tm_player_market_values("England", 2023) %>% select(player_name, market_value_euro = player_market_value_euro)
+values_2024 <- tm_player_market_values("England", 2024) %>% select(player_name, market_value_euro = player_market_value_euro)
+
+################################################################################
+# 合并球员统计与市值，并导出
+join_year <- function(std, val, year) {
+  merged <- std %>%
+    left_join(val, by = "player_name", relationship = "many-to-many") %>%
+    mutate(Year = year)
+  write.csv(merged, file.path(output_dir, paste0("players_", year, ".csv")), row.names = FALSE)
+  merged
+}
+
+players_2020 <- join_year(standard_2020, values_2020, 2020)
+players_2021 <- join_year(standard_2021, values_2021, 2021)
+players_2022 <- join_year(standard_2022, values_2022, 2022)
+players_2023 <- join_year(standard_2023, values_2023, 2023)
+players_2024 <- join_year(standard_2024, values_2024, 2024)
+
+################################################################################
+# 合并所有年份球员数据
+players <- bind_rows(players_2020, players_2021, players_2022, players_2023, players_2024) %>%
+  rename("Player" = "player_name",
+         "G_plus_A" = "G+A",
+         "npxG_plus_xAG_Expected" = "npxG+xAG_Expected",
+         "Gls_Per_90" = "Gls_Per",
+         "Ast_Per_90" = "Ast_Per",
+         "G_plus_A_Per_90" = "G+A_Per",
+         "G_minus_PK_Per_90" = "G_minus_PK_Per",
+         "G_plus_A_minus_PK_Per_90" = "G+A_minus_PK_Per",
+         "xG_Per_90" = "xG_Per",
+         "xAG_Per_90" = "xAG_Per",
+         "xG_plus_xAG_Per_90" = "xG+xAG_Per",
+         "npxG_Per_90" = "npxG_Per",
+         "npxG_plus_xAG_Per_90" = "npxG+xAG_Per")
+
+# 去除无市值行并导出
+players_preprocessed <- players[!is.na(players$market_value_euro), ]
+write.csv(players_preprocessed, file.path(output_dir, "players_preprocessed_cleaned.csv"), row.names = FALSE)
+
+################################################################################
+# 检查结果
+cat("✅ 数据加载完成\n")
+cat("球队样本数:", nrow(pl_standard), "\n")
+cat("球员总样本数:", nrow(players_preprocessed), "\n")
